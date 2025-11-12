@@ -1,0 +1,24 @@
+{
+  "billOfLadingNumber": "ZMLU34110002",
+  "savedAt": "2025-11-11T19:02:47.531225",
+  "extractedData": {
+    "billOfLadingNumber": "ZMLU34110002",
+    "containerNumber": "MSCU1234567",
+    "consigneeName": "KABOFER TRADING INC",
+    "consigneeAddress": "66-89 MAIN ST RGH 643, FLUSHING, NY, 94089 United states",
+    "dateOfExport": "08/22/2019",
+    "lineItemsCount": 18,
+    "averageGrossWeight": "902.78 KG",
+    "averagePrice": "$1289.51"
+  },
+  "files": [
+    {
+      "originalName": "BL-COSU534343282.pdf",
+      "path": "ZMLU34110002/BL-COSU534343282.pdf"
+    },
+    {
+      "originalName": "Demo-Invoice-PackingList_1.xlsx",
+      "path": "ZMLU34110002/Demo-Invoice-PackingList_1.xlsx"
+    }
+  ]
+}
