@@ -71,7 +71,7 @@ The application extracts the following shipment data:
 - Python 3.12+ (works with Python 3.8+)
 - Node.js 20.7+ (for frontend)
 - npm
-**Add the api key to the config.py and extractionService.js**:
+- **Add the api key to the config.py and extractionService.js**
 
 ### Backend Setup
 
