@@ -71,6 +71,7 @@ The application extracts the following shipment data:
 - Python 3.12+ (works with Python 3.8+)
 - Node.js 20.7+ (for frontend)
 - npm
+**Add the api key to the config.py and extractionService.js**:
 
 ### Backend Setup
 
@@ -103,9 +104,7 @@ The application extracts the following shipment data:
    npm install
    ```
 
-3. **Add the api key to the config.py and extractionService.js**:
-
-4. **Start the development server**:
+3. **Start the development server**:
    ```bash
    npm run dev
    ```
