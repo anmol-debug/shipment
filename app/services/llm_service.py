@@ -2,6 +2,7 @@ from anthropic import Anthropic
 from app.core.config import settings
 import json
 
+print(f"[DEBUG] Loading Anthropic client with API key: {settings.ANTHROPIC_API_KEY[:30]}...{settings.ANTHROPIC_API_KEY[-20:]}")
 client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
 
 

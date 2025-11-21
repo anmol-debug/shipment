@@ -1,6 +1,6 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Body
+from fastapi import APIRouter, UploadFile, File, HTTPException, Body, Query
 from fastapi.responses import FileResponse
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import os
 import tempfile
 import shutil
@@ -10,6 +10,7 @@ from datetime import datetime
 
 from app.services.document_processor import process_documents
 from app.services.llm_service import extract_field_from_document
+from app.services.audit_service import audit_service
 
 router = APIRouter()
 
@@ -30,10 +31,15 @@ async def health_check():
 
 @router.post("/extract", response_model=dict)
 async def extract_shipment_data(
-    files: List[UploadFile] = File(...)
+    files: List[UploadFile] = File(...),
+    use_mock: bool = True  # Default to mock mode to bypass Claude API
 ):
     """
     Extract shipment data from uploaded documents (PDF and XLSX).
+
+    Args:
+        files: Uploaded PDF/XLSX documents
+        use_mock: If True, return sample data without calling Claude API (default: True)
     """
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded")
@@ -71,6 +77,55 @@ async def extract_shipment_data(
                 "size": len(content)
             })
 
+        # MOCK MODE: Return sample data matching seed.sql structure
+        if use_mock:
+            print(f"[MOCK MODE] Returning sample shipment data for {len(files)} files")
+            extracted_data = {
+                # Core extraction fields (used in UI forms)
+                "billOfLadingNumber": "ZMLU34110002",
+                "containerNumber": "MSCU1234567",
+                "consigneeName": "KABOFER TRADING INC",
+                "consigneeAddress": "3838 CAMINO DEL RIO NORTH, STE 235, SAN DIEGO, CA 92108",
+                "dateOfExport": "08/22/2019",
+                "lineItemsCount": 18,
+                "averageGrossWeight": "902.78 KG",
+                "averagePrice": "$1289.51",
+
+                # Additional fields from seed.sql schema
+                "notes": "MOCK DATA - Sample shipment for testing audit/history features",
+                "units": "CTNS",
+                "containers": [{
+                    "seal_number": "EMCWDGDSD",
+                    "container_size": "40HQ",
+                    "container_number": "MSCU1234567",
+                    "container_weight": "16250",
+                    "container_quantity": "776",
+                    "container_measurement": "136",
+                    "container_weight_unit": "KGS",
+                    "container_quantity_unit": "CARTON(S)",
+                    "container_measurement_unit": "CBM"
+                }],
+                "vessel_name": "COSCO BELGIUM",
+                "voyage_number": "095E",
+                "shipper_name": "CHINA ABRASIVES EXPORT CORPORATION",
+                "consignee_name": "KABOFER TRADING INC",
+                "port_of_loading": "SHANGHAI,CHINA",
+                "port_of_discharge": "LONG BEACH, CA",
+                "house_bol_number": "ZMLU34110002",
+                "master_bol_number": "COSU534343282",
+                "description_of_goods": "HOUSEHOLD AND PERSONAL ITEMS",
+                "date_of_export_mmddyy": "082219",
+                "estimated_arrival_date_mmddyy": "082919"
+            }
+
+            return {
+                "success": True,
+                "data": extracted_data,
+                "files": saved_files,
+                "mock_mode": True
+            }
+
+        # REAL MODE: Process documents and call Claude API
         # Process documents - extract text
         print(f"Processing {len(temp_file_paths)} documents...")
         document_text = process_documents(temp_file_paths)
@@ -82,7 +137,8 @@ async def extract_shipment_data(
         return {
             "success": True,
             "data": extracted_data,
-            "files": saved_files
+            "files": saved_files,
+            "mock_mode": False
         }
 
     except HTTPException:
@@ -395,3 +451,262 @@ async def list_saved_extractions():
     except Exception as e:
         print(f"Error listing saved data: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to list saved data: {str(e)}")
+
+
+@router.get("/shipments/user/{user_id}")
+async def get_user_shipments(user_id: str):
+    """
+    Get all shipments for a specific user from database
+
+    Args:
+        user_id: UUID of the user
+
+    Returns:
+        List of shipments with id, title, status, extracted_data, created_at, updated_at
+    """
+    try:
+        from app.services.supabase_client import get_supabase
+
+        supabase = get_supabase()
+
+        # Query shipments for this user
+        result = supabase.table('shipment_requests')\
+            .select('id, title, description, status, extracted_data, created_at, updated_at, transportMode')\
+            .eq('user_id', user_id)\
+            .order('created_at', desc=True)\
+            .execute()
+
+        return {
+            "success": True,
+            "user_id": user_id,
+            "count": len(result.data),
+            "shipments": result.data
+        }
+
+    except Exception as e:
+        print(f"Error getting user shipments: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get user shipments: {str(e)}")
+
+
+# ============================================================================
+# AUDIT & VERSIONING ENDPOINTS
+# ============================================================================
+
+@router.get("/shipments/{shipment_id}/history")
+async def get_shipment_history(
+    shipment_id: str,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0)
+):
+    """
+    Get audit history for a shipment
+
+    Returns a list of all changes made to the shipment with:
+    - Version numbers
+    - Who made the change
+    - When it was made
+    - What changed
+    """
+    try:
+        history = await audit_service.get_shipment_history(
+            shipment_id=shipment_id,
+            limit=limit,
+            offset=offset
+        )
+
+        return {
+            "success": True,
+            "shipment_id": shipment_id,
+            "count": len(history),
+            "history": history
+        }
+
+    except Exception as e:
+        print(f"Error getting shipment history: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/shipments/{shipment_id}/versions/{version_no}")
+async def get_shipment_version(
+    shipment_id: str,
+    version_no: int
+):
+    """
+    Get a specific version of a shipment
+
+    Returns the complete shipment data as it existed at that version
+    """
+    try:
+        version = await audit_service.get_version(
+            shipment_id=shipment_id,
+            version_no=version_no
+        )
+
+        if not version:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Version {version_no} not found for shipment {shipment_id}"
+            )
+
+        return {
+            "success": True,
+            "version": version
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error getting version: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/shipments/{shipment_id}/restore")
+async def restore_shipment_version(
+    shipment_id: str,
+    data: Dict[str, Any] = Body(...)
+):
+    """
+    Restore a shipment to a previous version
+
+    Required body:
+    - source_version_no: Version number to restore from
+    - actor_id: User performing the restore
+    - actor_name: Display name of user
+    - reason: Why restoring this version
+    """
+    try:
+        source_version_no = data.get("source_version_no")
+        actor_id = data.get("actor_id")
+        actor_name = data.get("actor_name")
+        reason = data.get("reason", "")
+
+        if not all([source_version_no, actor_id, actor_name]):
+            raise HTTPException(
+                status_code=400,
+                detail="Missing required fields: source_version_no, actor_id, actor_name"
+            )
+
+        result = await audit_service.restore_version(
+            shipment_id=shipment_id,
+            source_version_no=source_version_no,
+            actor_id=actor_id,
+            actor_name=actor_name,
+            reason=reason
+        )
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error restoring version: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/shipments/{shipment_id}/audit")
+async def create_audit_event(
+    shipment_id: str,
+    data: Dict[str, Any] = Body(...)
+):
+    """
+    Create an audit event for a shipment change
+
+    Required body:
+    - event_type: Type of change (created, updated, status_changed, file_added, file_removed, restored)
+    - actor_id: User making the change
+    - actor_name: Display name of user
+    - field_changes: What changed (dict)
+    - snapshot_data: Complete current state (dict)
+    - reason: Optional reason for change
+    - metadata: Optional additional context
+    """
+    try:
+        event_type = data.get("event_type")
+        actor_id = data.get("actor_id")
+        actor_name = data.get("actor_name")
+        field_changes = data.get("field_changes", {})
+        snapshot_data = data.get("snapshot_data", {})
+        reason = data.get("reason")
+        metadata = data.get("metadata")
+
+        if not all([event_type, actor_id, actor_name, snapshot_data]):
+            raise HTTPException(
+                status_code=400,
+                detail="Missing required fields: event_type, actor_id, actor_name, snapshot_data"
+            )
+
+        result = await audit_service.create_audit_event(
+            shipment_id=shipment_id,
+            event_type=event_type,
+            actor_id=actor_id,
+            actor_name=actor_name,
+            reason=reason,
+            field_changes=field_changes,
+            snapshot_data=snapshot_data,
+            metadata=metadata
+        )
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error creating audit event: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/shipments/{shipment_id}/filter")
+async def filter_audit_events(
+    shipment_id: str,
+    actor_id: Optional[str] = Query(None),
+    event_type: Optional[str] = Query(None),
+    field_name: Optional[str] = Query(None),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=100)
+):
+    """
+    Filter audit events by various criteria
+
+    Query parameters:
+    - actor_id: Filter by who made the change
+    - event_type: Filter by type of change
+    - field_name: Filter by which field was changed
+    - start_date: Filter events after this date (ISO format)
+    - end_date: Filter events before this date (ISO format)
+    - limit: Max number of results
+    """
+    try:
+        # Parse dates if provided
+        start_dt = datetime.fromisoformat(start_date) if start_date else None
+        end_dt = datetime.fromisoformat(end_date) if end_date else None
+
+        events = await audit_service.filter_events(
+            shipment_id=shipment_id,
+            actor_id=actor_id,
+            event_type=event_type,
+            start_date=start_dt,
+            end_date=end_dt,
+            field_name=field_name,
+            limit=limit
+        )
+
+        return {
+            "success": True,
+            "shipment_id": shipment_id,
+            "count": len(events),
+            "events": events,
+            "filters": {
+                "actor_id": actor_id,
+                "event_type": event_type,
+                "field_name": field_name,
+                "start_date": start_date,
+                "end_date": end_date
+            }
+        }
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
+    except Exception as e:
+        print(f"Error filtering events: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))

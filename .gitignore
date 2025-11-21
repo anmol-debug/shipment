@@ -4,3 +4,12 @@ dist/
 uploads/
 *.log
 .DS_Store
+
+# Supabase
+.branches
+.temp
+
+# dotenvx
+.env.keys
+.env.local
+.env.*.local

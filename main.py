@@ -2,8 +2,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.api.routes import router
+from app.api.auth import router as auth_router
 import uvicorn
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 app = FastAPI(title="Shipment Document Extraction API")
 
@@ -21,7 +26,9 @@ uploads_dir = Path("uploads")
 uploads_dir.mkdir(exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
+# Include routers
 app.include_router(router, prefix="/api")
+app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
 
 @app.get("/")
 async def root():
